@@ -9,9 +9,10 @@ from api_client import AgroMarketClient, PriceAnalyzer
 from datetime import datetime, timedelta
 import re
 
-API_KEY = "c1ba5b3aeaa552ae2aae307bf1aa5dfc5e18196e748aeda0d99d1b62fd76de88"
+import os
 
-GROQ_API_KEY = "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"
+API_KEY = os.environ.get("AGRO_API_KEY", "")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 SUPPORTED_ITEMS = ["배추", "무", "고추", "대파", "양파", "감자", "딸기", "사과", "배"]

@@ -1,4 +1,10 @@
 import streamlit as st
+import os
+
+# Streamlit Secrets → 환경변수로 등록
+os.environ["AGRO_API_KEY"] = st.secrets["AGRO_API_KEY"]
+os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]
+
 from chatbot import AgroChatBot
 
 st.set_page_config(page_title="밭봇", page_icon="🌾")
