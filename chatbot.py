@@ -62,7 +62,10 @@ class AgroChatBot:
                     {"role": "user", "content": safe_input}
                 ]
             )
-            return response.choices[0].message.content
+            text = response.choices[0].message.content
+            # 한자(CJK) 및 일본어(히라가나·가타카나) 제거
+            text = re.sub(r'[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]+', '', text)
+            return text
         except Exception as e:
             return f"AI 답변 중 오류가 발생했어요: {e}"
 
