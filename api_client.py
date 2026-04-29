@@ -280,3 +280,35 @@ class PriceAnalyzer:
             "조언":               advice,
             "시계열":             series,
         }
+
+    def get_oil_correlation(self, items: list[str], days: int = 30) -> list[dict]:
+        """유가(WTI)와 농산물 가격의 상관계수 분석 (최근 N일)"""
+        import yfinance as yf
+        import numpy as np
+
+        oil_hist = yf.Ticker("CL=F").history(period=f"{days + 10}d")
+        if oil_hist.empty:
+            return []
+        oil_close = oil_hist["Close"].values[-days:]
+
+        def fetch_item(item):
+            series = self._get_price_series(item, days=days)
+            if len(series) < 5:
+                return None
+            prices = np.array([p for _, p in series], dtype=float)
+            oil = oil_close[-len(prices):]
+            if len(oil) != len(prices) or len(prices) < 5:
+                return None
+            corr = float(np.corrcoef(oil, prices)[0, 1])
+            if np.isnan(corr):
+                return None
+            return {"품목": item, "상관계수": round(corr, 2)}
+
+        results = []
+        with ThreadPoolExecutor(max_workers=5) as ex:
+            for r in ex.map(fetch_item, items):
+                if r:
+                    results.append(r)
+
+        results.sort(key=lambda x: abs(x["상관계수"]), reverse=True)
+        return results

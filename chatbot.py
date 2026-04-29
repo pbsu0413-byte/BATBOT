@@ -140,6 +140,37 @@ class AgroChatBot:
             return f"유가 데이터 조회 중 오류가 발생했어요: {e}"
         return "\n\n".join(parts) if parts else "유가 데이터를 가져올 수 없어요. 잠시 후 다시 시도해주세요."
 
+    def _oil_correlation_response(self) -> str:
+        try:
+            results = self.analyzer.get_oil_correlation(SUPPORTED_ITEMS, days=30)
+        except Exception as e:
+            return f"유가 연동 분석 중 오류가 발생했어요: {e}"
+        if not results:
+            return "데이터가 부족해서 분석할 수 없어요. 잠시 후 다시 시도해주세요."
+
+        lines = []
+        for r in results:
+            c = r["상관계수"]
+            if c >= 0.6:
+                tag = "강한 연동 ▲▲"
+            elif c >= 0.3:
+                tag = "중간 연동 ▲"
+            elif c <= -0.6:
+                tag = "강한 역연동 ▼▼"
+            elif c <= -0.3:
+                tag = "중간 역연동 ▼"
+            else:
+                tag = "거의 무관  ─"
+            lines.append(f"  {r['품목']:4s}: {c:+.2f}  {tag}")
+
+        body = "\n".join(lines)
+        return (
+            "[유가(WTI)와 농산물 가격 상관분석 — 최근 30일]\n\n"
+            f"{body}\n\n"
+            "※ +1.0에 가까울수록 유가 오를 때 같이 오름\n"
+            "※ 응답에 10~20초 걸릴 수 있어요"
+        )
+
     def respond(self, user_input: str) -> str:
         text = user_input.strip()
 
@@ -199,6 +230,9 @@ class AgroChatBot:
                     f"  ▶ [{s['신호']}] {s['조언']}\n\n"
                     f"최근 추이: {trend}"
                 )
+
+        if any(kw in text for kw in ["유가 관련", "유가 영향", "기름값 영향", "유가 연동", "유가랑 관련"]):
+            return self._oil_correlation_response()
 
         if any(kw in text for kw in ["급등", "급락", "오른", "내린", "알림", "비교"]):
             results = []
