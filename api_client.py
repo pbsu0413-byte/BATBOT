@@ -44,8 +44,8 @@ SEASONAL_ITEMS: dict[int, list[str]] = {
 class OilPriceClient:
     """한국석유공사 오피넷 — 국내 주유소 가격 및 국제 원유 가격"""
 
-    DOMESTIC_URL = "https://www.opinet.co.kr/api/avgAllPrice.do"
-    INTL_URL     = "https://www.opinet.co.kr/api/internationalOilPrice.do"
+    DOMESTIC_URL = "http://www.opinet.co.kr/api/avgAllPrice.do"
+    INTL_URL     = "http://www.opinet.co.kr/api/internationalOilPrice.do"
 
     _PRODUCT_LABELS = {
         "B027": "휘발유",
