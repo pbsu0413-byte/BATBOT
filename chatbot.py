@@ -267,31 +267,26 @@ class AgroChatBot:
             "※ 응답에 10~20초 걸릴 수 있어요"
         )
 
-    def _kamis_response(self, item: str, start_date: str, end_date: str) -> str:
-        if not self.kamis:
-            return (
-                "과거 가격 이력 기능을 사용하려면 KAMIS API 키가 필요합니다.\n"
-                "https://www.kamis.or.kr 에서 무료로 발급받아\n"
-                "Streamlit Secrets에 KAMIS_CERT_KEY, KAMIS_CERT_ID 를 등록해 주세요."
-            )
-        df = self.kamis.get_price_period(item, start_date, end_date)
+    def _history_response(self, item: str, year: int) -> str:
+        df = self.analyzer.get_yearly_price(item, year)
         if df.empty:
-            return f"{start_date} ~ {end_date} 기간의 {item} 데이터가 없어요."
+            return (
+                f"{year}년 {item} 데이터가 없어요.\n"
+                "aT 경매 데이터가 없는 연도거나 해당 시장에서 거래 기록이 없을 수 있어요."
+            )
 
-        avg  = df["가격"].mean()
-        low  = df["가격"].min()
-        high = df["가격"].max()
-        # 월별 평균 추이
-        df["월"] = df["날짜"].str[:7]
-        monthly = df.groupby("월")["가격"].mean().round(0)
-        trend = "  →  ".join(f"{m} {int(p):,}원" for m, p in monthly.items())
+        avg  = df["평균가"].mean()
+        low  = df["평균가"].min()
+        high = df["평균가"].max()
+        trend = "  →  ".join(f"{r['월']} {r['평균가']:,}원" for _, r in df.iterrows())
 
         return (
-            f"[{item} 과거 가격 이력 — {start_date} ~ {end_date}]\n\n"
-            f"  평균가: {round(avg):,}원\n"
-            f"  최저가: {round(low):,}원\n"
-            f"  최고가: {round(high):,}원\n\n"
-            f"월별 추이: {trend}"
+            f"[{item} {year}년 월별 평균 경락가]\n\n"
+            f"  연평균: {round(avg):,}원\n"
+            f"  최저월: {round(low):,}원\n"
+            f"  최고월: {round(high):,}원\n\n"
+            f"월별: {trend}\n\n"
+            "※ 조회에 1~2분 걸릴 수 있어요"
         )
 
     # ------------------------------------------------------------------
@@ -323,13 +318,14 @@ class AgroChatBot:
                 "각 품목의 가격이나 출하 타이밍을 물어보세요!"
             )
 
-        # 과거 가격 이력 (KAMIS)
+        # 과거 가격 이력 (aT API 연도별 조회)
         history_range = self._extract_history_range(text)
         if history_range:
             item = self._extract_item(text)
             if item:
-                start, end = history_range
-                return self._kamis_response(item, start, end)
+                start, _ = history_range
+                year = int(start[:4])
+                return self._history_response(item, year)
 
         # 특정 품목 실시간 조회
         item = self._extract_item(text)

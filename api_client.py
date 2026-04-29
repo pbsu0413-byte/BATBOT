@@ -281,6 +281,46 @@ class PriceAnalyzer:
             "시계열":             series,
         }
 
+    def get_yearly_price(self, item: str, year: int) -> pd.DataFrame:
+        """
+        aT API로 특정 연도 전체의 월별 평균 경락가 조회.
+        주말·공휴일 제외 평일만 조회하며 ThreadPoolExecutor로 병렬 처리.
+
+        Returns
+        -------
+        DataFrame — columns: [월, 평균가]  |  빈 DataFrame on error/no data
+        """
+        from calendar import monthrange
+
+        def fetch_month(month: int):
+            _, last = monthrange(year, month)
+            dates = [
+                date(year, month, d)
+                for d in range(1, last + 1)
+                if date(year, month, d).weekday() < 5
+            ]
+            prices = []
+            for d in dates:
+                df = self.client.get_price_by_date(item, d.strftime("%Y-%m-%d"))
+                if not df.empty and "scsbd_prc" in df.columns:
+                    vals = df["scsbd_prc"].dropna()
+                    if not vals.empty:
+                        prices.append(float(vals.mean()))
+            if not prices:
+                return None
+            return (f"{month:02d}월", round(sum(prices) / len(prices)))
+
+        results = []
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            for r in ex.map(fetch_month, range(1, 13)):
+                if r:
+                    results.append(r)
+
+        results.sort(key=lambda x: x[0])
+        if not results:
+            return pd.DataFrame()
+        return pd.DataFrame(results, columns=["월", "평균가"])
+
     def get_oil_correlation(self, items: list[str], days: int = 30) -> list[dict]:
         """유가(WTI)와 농산물 가격의 상관계수 분석 (최근 N일)"""
         import yfinance as yf
