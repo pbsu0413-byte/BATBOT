@@ -174,6 +174,10 @@ class AgroChatBot:
     def respond(self, user_input: str) -> str:
         text = user_input.strip()
 
+        # 유가 연동 상관분석 (일반 유가 조회보다 먼저 체크)
+        if any(kw in text for kw in ["유가 관련", "유가 영향", "기름값 영향", "유가 연동", "유가랑 관련"]):
+            return self._oil_correlation_response()
+
         # 유가 조회
         is_domestic = any(kw in text for kw in _OIL_DOMESTIC_KW)
         is_intl     = any(kw in text for kw in _OIL_INTL_KW)
@@ -230,9 +234,6 @@ class AgroChatBot:
                     f"  ▶ [{s['신호']}] {s['조언']}\n\n"
                     f"최근 추이: {trend}"
                 )
-
-        if any(kw in text for kw in ["유가 관련", "유가 영향", "기름값 영향", "유가 연동", "유가랑 관련"]):
-            return self._oil_correlation_response()
 
         if any(kw in text for kw in ["급등", "급락", "오른", "내린", "알림", "비교"]):
             results = []
