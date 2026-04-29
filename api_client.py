@@ -56,6 +56,7 @@ class OilPriceClient:
     _INTL_TICKERS = {
         "WTI (서부텍사스유)": "CL=F",
         "브렌트유":           "BZ=F",
+        "천연가스 (Henry Hub)": "NG=F",
     }
 
     def __init__(self, api_key: str = ""):
