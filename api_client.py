@@ -380,6 +380,112 @@ class PriceAnalyzer:
 
 
 # ---------------------------------------------------------------------------
+# MafraHistoryClient — data.mafra.go.kr 실시간경락 도매시장 유통통계 (2014~2023)
+# ---------------------------------------------------------------------------
+
+class MafraHistoryClient:
+    """농림부 도매시장 경락가 이력 API (2014-01-01 ~ 2023-12-30)"""
+
+    BASE_URL = "http://211.237.50.150:7080/openapi/{key}/json/Grid_20220826000000000647_1"
+    GARAK_CODE = "110001"
+
+    # "배"는 단독 품목(배/서양배)만 매칭, "배추"와 구분
+    _EXACT: dict[str, set[str]] = {
+        "배": {"배(", "배 ", "황금배", "신고배", "원황배", "추황배"},
+    }
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.base    = self.BASE_URL.format(key=api_key)
+        self.session = _build_session()
+
+    def _get(self, start: int, end: int, params: dict) -> dict:
+        url  = f"{self.base}/{start}/{end}"
+        resp = self.session.get(url, params=params, timeout=30)
+        resp.raise_for_status()
+        return resp.json()
+
+    def _match(self, item: str, name: str) -> bool:
+        if item in self._EXACT:
+            return any(k in name for k in self._EXACT[item])
+        return item in name
+
+    def get_price_by_date(self, item: str, target_date: str) -> float | None:
+        """
+        특정 날짜 가락시장 경락 평균가 (원).
+        target_date: YYYYMMDD 형식
+        """
+        try:
+            data = self._get(1, 1000, {"DELNG_DE": target_date, "WHSAL_CODE": self.GARAK_CODE})
+        except Exception:
+            return None
+
+        key  = list(data.keys())[0]
+        rows = data[key].get("row", [])
+        prices = [
+            float(r["SBID_PRIC_AVG"])
+            for r in rows
+            if self._match(item, r.get("STD_PRDLST_NM", ""))
+            and r.get("SBID_PRIC_AVG")
+        ]
+        return round(sum(prices) / len(prices)) if prices else None
+
+    def get_yearly_price(self, item: str, year: int) -> pd.DataFrame:
+        """
+        특정 연도의 월별 평균 경락가.
+        매월 첫 번째 평일(수요일 기준)을 샘플 날짜로 사용.
+
+        Returns
+        -------
+        DataFrame — columns: [월, 평균가]  |  빈 DataFrame on error/no data
+        """
+        if not (2014 <= year <= 2023):
+            return pd.DataFrame()
+
+        rows_out = []
+        for month in range(1, 13):
+            # 해당 월 15일을 기준 (경매가 있을 가능성 높은 중간 날짜)
+            sample = date(year, month, 15)
+            # 주말이면 다음 월요일로
+            while sample.weekday() >= 5:
+                sample += timedelta(days=1)
+            date_str = sample.strftime("%Y%m%d")
+            price = self.get_price_by_date(item, date_str)
+            if price:
+                rows_out.append({"월": f"{month:02d}월", "평균가": price})
+
+        return pd.DataFrame(rows_out) if rows_out else pd.DataFrame()
+
+    def get_price_series(self, item: str, start_year: int, end_year: int) -> list[tuple[str, float]]:
+        """
+        연도 범위의 월별 평균가 시계열 반환 (오래된 순).
+        Returns list of (YYYY-MM, price)
+        """
+        results = []
+        years = range(max(2014, start_year), min(2024, end_year + 1))
+
+        def fetch_month(year: int, month: int):
+            sample = date(year, month, 15)
+            while sample.weekday() >= 5:
+                sample += timedelta(days=1)
+            price = self.get_price_by_date(item, sample.strftime("%Y%m%d"))
+            return (f"{year}-{month:02d}", price) if price else None
+
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            futures = {
+                ex.submit(fetch_month, y, m): (y, m)
+                for y in years for m in range(1, 13)
+            }
+            for f in as_completed(futures):
+                r = f.result()
+                if r:
+                    results.append(r)
+
+        results.sort(key=lambda x: x[0])
+        return results
+
+
+# ---------------------------------------------------------------------------
 # KamisClient — KAMIS 농산물유통정보 과거 가격 이력
 # ---------------------------------------------------------------------------
 

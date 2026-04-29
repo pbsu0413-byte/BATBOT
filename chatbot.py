@@ -6,7 +6,7 @@
 """
 
 from groq import Groq
-from api_client import AgroMarketClient, PriceAnalyzer, OilPriceClient, KamisClient
+from api_client import AgroMarketClient, PriceAnalyzer, OilPriceClient, KamisClient, MafraHistoryClient
 from datetime import datetime, timedelta
 import re
 
@@ -34,11 +34,12 @@ def _get_key(enc_env: str, plain_secret: str) -> str:
         pass
     return _decrypt(os.environ.get(enc_env, ""))
 
-API_KEY          = _get_key("AGRO_API_KEY_ENC",  "AGRO_API_KEY")
-GROQ_API_KEY     = _get_key("GROQ_API_KEY_ENC",  "GROQ_API_KEY")
-OIL_API_KEY      = _get_key("OIL_API_KEY_ENC",   "OIL_API_KEY")
-KAMIS_CERT_KEY   = _get_key("KAMIS_CERT_KEY_ENC", "KAMIS_CERT_KEY")
-KAMIS_CERT_ID    = _get_key("KAMIS_CERT_ID_ENC",  "KAMIS_CERT_ID")
+API_KEY          = _get_key("AGRO_API_KEY_ENC",   "AGRO_API_KEY")
+GROQ_API_KEY     = _get_key("GROQ_API_KEY_ENC",   "GROQ_API_KEY")
+OIL_API_KEY      = _get_key("OIL_API_KEY_ENC",    "OIL_API_KEY")
+KAMIS_CERT_KEY   = _get_key("KAMIS_CERT_KEY_ENC",  "KAMIS_CERT_KEY")
+KAMIS_CERT_ID    = _get_key("KAMIS_CERT_ID_ENC",   "KAMIS_CERT_ID")
+MAFRA_API_KEY    = _get_key("MAFRA_API_KEY_ENC",   "MAFRA_API_KEY")
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 SUPPORTED_ITEMS = ["배추", "무", "고추", "대파", "양파", "감자", "딸기", "사과", "배"]
@@ -54,6 +55,7 @@ class AgroChatBot:
         self.analyzer    = PriceAnalyzer(self.client)
         self.oil_client  = OilPriceClient(OIL_API_KEY)
         self.kamis       = KamisClient(KAMIS_CERT_KEY, KAMIS_CERT_ID) if KAMIS_CERT_KEY else None
+        self.mafra       = MafraHistoryClient(MAFRA_API_KEY) if MAFRA_API_KEY else None
 
     # ------------------------------------------------------------------
     # 추출 헬퍼
@@ -268,11 +270,17 @@ class AgroChatBot:
         )
 
     def _history_response(self, item: str, year: int) -> str:
-        df = self.analyzer.get_yearly_price(item, year)
+        if not self.mafra:
+            return "과거 이력 조회를 위한 API 키가 설정되지 않았어요."
+
+        if not (2014 <= year <= 2023):
+            return f"{year}년 데이터는 지원하지 않아요. 2014~2023년 사이로 질문해 주세요."
+
+        df = self.mafra.get_yearly_price(item, year)
         if df.empty:
             return (
                 f"{year}년 {item} 데이터가 없어요.\n"
-                "aT 경매 데이터가 없는 연도거나 해당 시장에서 거래 기록이 없을 수 있어요."
+                "해당 연도 가락시장에 거래 기록이 없거나 API 오류일 수 있어요."
             )
 
         avg  = df["평균가"].mean()
@@ -281,12 +289,12 @@ class AgroChatBot:
         trend = "  →  ".join(f"{r['월']} {r['평균가']:,}원" for _, r in df.iterrows())
 
         return (
-            f"[{item} {year}년 월별 평균 경락가]\n\n"
+            f"[{item} {year}년 월별 평균 경락가 — 가락시장]\n\n"
             f"  연평균: {round(avg):,}원\n"
             f"  최저월: {round(low):,}원\n"
             f"  최고월: {round(high):,}원\n\n"
             f"월별: {trend}\n\n"
-            "※ 조회에 1~2분 걸릴 수 있어요"
+            "※ 조회에 30초~1분 걸릴 수 있어요"
         )
 
     # ------------------------------------------------------------------
