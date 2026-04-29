@@ -42,10 +42,9 @@ SEASONAL_ITEMS: dict[int, list[str]] = {
 
 
 class OilPriceClient:
-    """한국석유공사 오피넷 — 국내 주유소 가격 및 국제 원유 가격"""
+    """유가 정보 — 국제유가: 야후파이낸스 / 국내: 오피넷(가능 시)"""
 
     DOMESTIC_URL = "http://www.opinet.co.kr/api/avgAllPrice.do"
-    INTL_URL     = "http://www.opinet.co.kr/api/internationalOilPrice.do"
 
     _PRODUCT_LABELS = {
         "B027": "휘발유",
@@ -54,53 +53,60 @@ class OilPriceClient:
         "C004": "등유",
     }
 
-    def __init__(self, api_key: str):
+    _INTL_TICKERS = {
+        "WTI (서부텍사스유)": "CL=F",
+        "브렌트유":           "BZ=F",
+    }
+
+    def __init__(self, api_key: str = ""):
         self.api_key = api_key
         self.session = _build_session()
 
     def get_domestic_price(self) -> list[dict]:
-        """국내 주유소 전국 평균 가격 (원/L)"""
-        resp = self.session.get(
-            self.DOMESTIC_URL,
-            params={"code": self.api_key, "out": "json"},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        oils = resp.json().get("RESULT", {}).get("OIL", [])
-        result = []
-        for oil in oils:
-            cd    = oil.get("PRODUCT_CD", "")
-            label = self._PRODUCT_LABELS.get(cd, oil.get("PRODUCT_NM", cd))
-            try:
-                price = round(float(oil.get("PRICE", 0)), 1)
-                diff  = round(float(oil.get("DIFF",  0)), 1)
-            except (ValueError, TypeError):
-                continue
-            result.append({"품목": label, "가격": price, "전일대비": diff})
-        return result
+        """국내 주유소 전국 평균 가격 (원/L) — 오피넷, 실패 시 빈 목록"""
+        if not self.api_key:
+            return []
+        try:
+            resp = self.session.get(
+                self.DOMESTIC_URL,
+                params={"code": self.api_key, "out": "json"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            oils = resp.json().get("RESULT", {}).get("OIL", [])
+            result = []
+            for oil in oils:
+                cd    = oil.get("PRODUCT_CD", "")
+                label = self._PRODUCT_LABELS.get(cd, oil.get("PRODUCT_NM", cd))
+                try:
+                    price = round(float(oil.get("PRICE", 0)), 1)
+                    diff  = round(float(oil.get("DIFF",  0)), 1)
+                except (ValueError, TypeError):
+                    continue
+                result.append({"품목": label, "가격": price, "전일대비": diff})
+            return result
+        except Exception:
+            return []
 
     def get_international_price(self) -> list[dict]:
-        """국제 원유 가격 (WTI·두바이·브렌트, USD/배럴)"""
-        resp = self.session.get(
-            self.INTL_URL,
-            params={"code": self.api_key, "out": "json"},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        oils = resp.json().get("RESULT", {}).get("OIL", [])
+        """국제 원유 가격 — 야후파이낸스 (USD/배럴), API 키 불필요"""
+        import yfinance as yf
         result = []
-        for oil in oils:
+        for name, ticker in self._INTL_TICKERS.items():
             try:
-                price = round(float(oil.get("PRICE", 0)), 2)
-                diff  = round(float(oil.get("DIFF",  0)), 2)
-            except (ValueError, TypeError):
+                hist = yf.Ticker(ticker).history(period="2d")
+                if hist.empty:
+                    continue
+                current = round(float(hist["Close"].iloc[-1]), 2)
+                diff    = round(float(hist["Close"].iloc[-1] - hist["Close"].iloc[-2]), 2) if len(hist) >= 2 else 0.0
+                result.append({
+                    "품목":    name,
+                    "가격":    current,
+                    "전일대비": diff,
+                    "기준일":  hist.index[-1].strftime("%Y-%m-%d"),
+                })
+            except Exception:
                 continue
-            result.append({
-                "품목":   oil.get("PRODUCT_NM", ""),
-                "가격":   price,
-                "전일대비": diff,
-                "기준일": oil.get("TRADE_DT", ""),
-            })
         return result
 
 

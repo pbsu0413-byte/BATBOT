@@ -50,7 +50,7 @@ class AgroChatBot:
     def __init__(self):
         self.client    = AgroMarketClient(API_KEY)
         self.analyzer  = PriceAnalyzer(self.client)
-        self.oil_client = OilPriceClient(OIL_API_KEY) if OIL_API_KEY else None
+        self.oil_client = OilPriceClient(OIL_API_KEY)
 
     def _extract_item(self, text: str) -> str | None:
         for item in SUPPORTED_ITEMS:
@@ -122,12 +122,6 @@ class AgroChatBot:
         return "\n".join(lines)
 
     def _oil_response(self, want_domestic: bool, want_intl: bool) -> str:
-        if not self.oil_client:
-            return (
-                "유가 기능을 사용하려면 오피넷 API 키가 필요합니다.\n"
-                "https://www.opinet.co.kr 에서 무료로 발급받아\n"
-                ".env 파일에 OIL_API_KEY_ENC 로 등록해 주세요."
-            )
         parts = []
         try:
             if want_domestic or (not want_intl):
