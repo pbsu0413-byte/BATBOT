@@ -15,6 +15,10 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # ---------------------------------------------------------------------------
+# OilPriceClient — 한국석유공사 오피넷 API
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
 # 상수
 # ---------------------------------------------------------------------------
 
@@ -35,6 +39,69 @@ SEASONAL_ITEMS: dict[int, list[str]] = {
     11: ["배추", "무", "사과", "대파"],
     12: ["배추", "무", "딸기", "사과"],
 }
+
+
+class OilPriceClient:
+    """한국석유공사 오피넷 — 국내 주유소 가격 및 국제 원유 가격"""
+
+    DOMESTIC_URL = "https://www.opinet.co.kr/api/avgAllPrice.do"
+    INTL_URL     = "https://www.opinet.co.kr/api/internationalOilPrice.do"
+
+    _PRODUCT_LABELS = {
+        "B027": "휘발유",
+        "D047": "경유",
+        "K015": "LPG(부탄)",
+        "C004": "등유",
+    }
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.session = _build_session()
+
+    def get_domestic_price(self) -> list[dict]:
+        """국내 주유소 전국 평균 가격 (원/L)"""
+        resp = self.session.get(
+            self.DOMESTIC_URL,
+            params={"code": self.api_key, "out": "json"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        oils = resp.json().get("RESULT", {}).get("OIL", [])
+        result = []
+        for oil in oils:
+            cd    = oil.get("PRODUCT_CD", "")
+            label = self._PRODUCT_LABELS.get(cd, oil.get("PRODUCT_NM", cd))
+            try:
+                price = round(float(oil.get("PRICE", 0)), 1)
+                diff  = round(float(oil.get("DIFF",  0)), 1)
+            except (ValueError, TypeError):
+                continue
+            result.append({"품목": label, "가격": price, "전일대비": diff})
+        return result
+
+    def get_international_price(self) -> list[dict]:
+        """국제 원유 가격 (WTI·두바이·브렌트, USD/배럴)"""
+        resp = self.session.get(
+            self.INTL_URL,
+            params={"code": self.api_key, "out": "json"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        oils = resp.json().get("RESULT", {}).get("OIL", [])
+        result = []
+        for oil in oils:
+            try:
+                price = round(float(oil.get("PRICE", 0)), 2)
+                diff  = round(float(oil.get("DIFF",  0)), 2)
+            except (ValueError, TypeError):
+                continue
+            result.append({
+                "품목":   oil.get("PRODUCT_NM", ""),
+                "가격":   price,
+                "전일대비": diff,
+                "기준일": oil.get("TRADE_DT", ""),
+            })
+        return result
 
 
 def _build_session() -> requests.Session:

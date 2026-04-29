@@ -5,23 +5,42 @@
 """
 
 from groq import Groq
-from api_client import AgroMarketClient, PriceAnalyzer
+from api_client import AgroMarketClient, PriceAnalyzer, OilPriceClient
 from datetime import datetime, timedelta
 import re
 
 import os
+from dotenv import load_dotenv
+from cryptography.fernet import Fernet
 
-API_KEY = os.environ.get("AGRO_API_KEY", "")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+load_dotenv()
+
+def _decrypt(enc_value: str) -> str:
+    if not enc_value:
+        return ""
+    key_path = os.path.join(os.path.dirname(__file__), "secret.key")
+    with open(key_path, "rb") as kf:
+        f = Fernet(kf.read())
+    return f.decrypt(enc_value.encode()).decode()
+
+API_KEY     = _decrypt(os.environ.get("AGRO_API_KEY_ENC", ""))
+GROQ_API_KEY = _decrypt(os.environ.get("GROQ_API_KEY_ENC", ""))
+OIL_API_KEY = _decrypt(os.environ.get("OIL_API_KEY_ENC", ""))
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 SUPPORTED_ITEMS = ["배추", "무", "고추", "대파", "양파", "감자", "딸기", "사과", "배"]
 
 
+_OIL_DOMESTIC_KW  = {"경유", "휘발유", "기름값", "주유", "LPG", "등유", "기름"}
+_OIL_INTL_KW      = {"국제유가", "WTI", "브렌트", "두바이유", "원유", "국제 유가"}
+_OIL_GENERAL_KW   = {"유가"}
+
+
 class AgroChatBot:
     def __init__(self):
-        self.client = AgroMarketClient(API_KEY)
-        self.analyzer = PriceAnalyzer(self.client)
+        self.client    = AgroMarketClient(API_KEY)
+        self.analyzer  = PriceAnalyzer(self.client)
+        self.oil_client = OilPriceClient(OIL_API_KEY) if OIL_API_KEY else None
 
     def _extract_item(self, text: str) -> str | None:
         for item in SUPPORTED_ITEMS:
@@ -69,8 +88,63 @@ class AgroChatBot:
         except Exception as e:
             return f"AI 답변 중 오류가 발생했어요: {e}"
 
+    def _format_domestic_oil(self, data: list[dict]) -> str:
+        lines = []
+        for d in data:
+            arrow = "▲" if d["전일대비"] > 0 else ("▼" if d["전일대비"] < 0 else "─")
+            lines.append(
+                f"  {d['품목']:8s}: {d['가격']:,.1f}원/L  "
+                f"{arrow} {abs(d['전일대비']):.1f}원"
+            )
+        return "\n".join(lines)
+
+    def _format_intl_oil(self, data: list[dict]) -> str:
+        lines = []
+        for d in data:
+            arrow = "▲" if d["전일대비"] > 0 else ("▼" if d["전일대비"] < 0 else "─")
+            date_str = d["기준일"]
+            if len(date_str) == 8:
+                date_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+            lines.append(
+                f"  {d['품목']:10s}: ${d['가격']:.2f}/배럴  "
+                f"{arrow} ${abs(d['전일대비']):.2f}  ({date_str})"
+            )
+        return "\n".join(lines)
+
+    def _oil_response(self, want_domestic: bool, want_intl: bool) -> str:
+        if not self.oil_client:
+            return (
+                "유가 기능을 사용하려면 오피넷 API 키가 필요합니다.\n"
+                "https://www.opinet.co.kr 에서 무료로 발급받아\n"
+                ".env 파일에 OIL_API_KEY_ENC 로 등록해 주세요."
+            )
+        parts = []
+        try:
+            if want_domestic or (not want_intl):
+                dom = self.oil_client.get_domestic_price()
+                if dom:
+                    parts.append(
+                        "[국내 주유소 전국 평균 가격]\n" + self._format_domestic_oil(dom)
+                    )
+            if want_intl or (not want_domestic):
+                intl = self.oil_client.get_international_price()
+                if intl:
+                    parts.append(
+                        "[국제 원유 가격 (USD/배럴)]\n" + self._format_intl_oil(intl)
+                    )
+        except Exception as e:
+            return f"유가 데이터 조회 중 오류가 발생했어요: {e}"
+        return "\n\n".join(parts) if parts else "유가 데이터를 가져올 수 없어요. 잠시 후 다시 시도해주세요."
+
     def respond(self, user_input: str) -> str:
         text = user_input.strip()
+
+        # 유가 조회
+        is_domestic = any(kw in text for kw in _OIL_DOMESTIC_KW)
+        is_intl     = any(kw in text for kw in _OIL_INTL_KW)
+        is_oil      = is_domestic or is_intl or any(kw in text for kw in _OIL_GENERAL_KW)
+        if is_oil:
+            return self._oil_response(want_domestic=is_domestic, want_intl=is_intl)
 
         if any(kw in text for kw in ["제철", "이번달", "이번 달", "계절"]):
             month = datetime.today().month
@@ -139,6 +213,10 @@ class AgroChatBot:
                 for r in results
             )
             return f"주요 품목 전일 대비 변동률 (전국 공영도매시장):\n\n{lines}"
+
+        # 유가 관련 키워드가 있지만 위에서 잡히지 않은 경우 재시도
+        if any(kw in text for kw in ["유가", "기름", "경유", "원유"]):
+            return self._oil_response(want_domestic=True, want_intl=True)
 
         return self.get_ai_answer(text)
 
