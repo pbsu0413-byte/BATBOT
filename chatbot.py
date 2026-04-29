@@ -19,10 +19,13 @@ load_dotenv()
 def _decrypt(enc_value: str) -> str:
     if not enc_value:
         return ""
-    key_path = os.path.join(os.path.dirname(__file__), "secret.key")
-    with open(key_path, "rb") as kf:
-        f = Fernet(kf.read())
-    return f.decrypt(enc_value.encode()).decode()
+    try:
+        key_path = os.path.join(os.path.dirname(__file__), "secret.key")
+        with open(key_path, "rb") as kf:
+            f = Fernet(kf.read())
+        return f.decrypt(enc_value.encode()).decode()
+    except Exception:
+        return ""
 
 def _get_key(enc_env: str, plain_secret: str) -> str:
     try:
