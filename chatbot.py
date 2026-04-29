@@ -2,10 +2,11 @@
 밭봇 — 전국 공영도매시장 실시간 경매정보 챗봇
 농가(생산자) 대상: 품목별 가격 조회 + 출하 타이밍 추천
 데이터 출처: 한국농수산식품유통공사(aT) 전국 공영도매시장 실시간 경매정보
+             KAMIS 농산물유통정보 (과거 가격 이력)
 """
 
 from groq import Groq
-from api_client import AgroMarketClient, PriceAnalyzer, OilPriceClient
+from api_client import AgroMarketClient, PriceAnalyzer, OilPriceClient, KamisClient
 from datetime import datetime, timedelta
 import re
 
@@ -33,24 +34,30 @@ def _get_key(enc_env: str, plain_secret: str) -> str:
         pass
     return _decrypt(os.environ.get(enc_env, ""))
 
-API_KEY      = _get_key("AGRO_API_KEY_ENC", "AGRO_API_KEY")
-GROQ_API_KEY = _get_key("GROQ_API_KEY_ENC", "GROQ_API_KEY")
-OIL_API_KEY  = _get_key("OIL_API_KEY_ENC",  "OIL_API_KEY")
+API_KEY          = _get_key("AGRO_API_KEY_ENC",  "AGRO_API_KEY")
+GROQ_API_KEY     = _get_key("GROQ_API_KEY_ENC",  "GROQ_API_KEY")
+OIL_API_KEY      = _get_key("OIL_API_KEY_ENC",   "OIL_API_KEY")
+KAMIS_CERT_KEY   = _get_key("KAMIS_CERT_KEY_ENC", "KAMIS_CERT_KEY")
+KAMIS_CERT_ID    = _get_key("KAMIS_CERT_ID_ENC",  "KAMIS_CERT_ID")
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 SUPPORTED_ITEMS = ["배추", "무", "고추", "대파", "양파", "감자", "딸기", "사과", "배"]
 
-
-_OIL_DOMESTIC_KW  = {"경유", "휘발유", "기름값", "주유", "LPG", "등유", "기름"}
-_OIL_INTL_KW      = {"국제유가", "WTI", "브렌트", "두바이유", "원유", "국제 유가"}
-_OIL_GENERAL_KW   = {"유가"}
+_OIL_DOMESTIC_KW = {"경유", "휘발유", "기름값", "주유", "LPG", "등유", "기름"}
+_OIL_INTL_KW     = {"국제유가", "WTI", "브렌트", "두바이유", "원유", "국제 유가"}
+_OIL_GENERAL_KW  = {"유가"}
 
 
 class AgroChatBot:
     def __init__(self):
-        self.client    = AgroMarketClient(API_KEY)
-        self.analyzer  = PriceAnalyzer(self.client)
-        self.oil_client = OilPriceClient(OIL_API_KEY)
+        self.client      = AgroMarketClient(API_KEY)
+        self.analyzer    = PriceAnalyzer(self.client)
+        self.oil_client  = OilPriceClient(OIL_API_KEY)
+        self.kamis       = KamisClient(KAMIS_CERT_KEY, KAMIS_CERT_ID) if KAMIS_CERT_KEY else None
+
+    # ------------------------------------------------------------------
+    # 추출 헬퍼
+    # ------------------------------------------------------------------
 
     def _extract_item(self, text: str) -> str | None:
         for item in SUPPORTED_ITEMS:
@@ -75,28 +82,117 @@ class AgroChatBot:
                 return kw
         return None
 
-    def get_ai_answer(self, user_input: str) -> str:
-        """AI 두뇌: 정해진 규칙 외의 질문을 처리합니다."""
+    def _extract_history_range(self, text: str) -> tuple[str, str] | None:
+        """과거 기간 표현 추출 → (start_date, end_date) 또는 None"""
+        today = datetime.today()
+        current_year = today.year
+
+        if "작년" in text:
+            y = current_year - 1
+            return f"{y}-01-01", f"{y}-12-31"
+        if "재작년" in text:
+            y = current_year - 2
+            return f"{y}-01-01", f"{y}-12-31"
+
+        # "N년 전"
+        m = re.search(r"(\d+)\s*년\s*전", text)
+        if m:
+            y = current_year - int(m.group(1))
+            return f"{y}-01-01", f"{y}-12-31"
+
+        # 특정 연도 단독 ("2020년", "2019")
+        m = re.search(r"(20\d{2})\s*년?", text)
+        if m:
+            y = int(m.group(1))
+            if y < current_year:
+                # 연도+월 패턴
+                mm = re.search(r"(20\d{2})\s*년?\s*(\d{1,2})\s*월", text)
+                if mm:
+                    y2  = int(mm.group(1))
+                    mo  = int(mm.group(2))
+                    last_day = (datetime(y2, mo % 12 + 1, 1) - timedelta(days=1)).day if mo < 12 else 31
+                    return f"{y2}-{mo:02d}-01", f"{y2}-{mo:02d}-{last_day:02d}"
+                return f"{y}-01-01", f"{y}-12-31"
+
+        return None
+
+    # ------------------------------------------------------------------
+    # 실시간 데이터 → Groq 컨텍스트 구성
+    # ------------------------------------------------------------------
+
+    def _build_context(self, text: str) -> str:
+        parts = []
+        oil_kws  = {"유가", "기름값", "원유", "WTI", "브렌트", "경유"}
+        agri_kws = {"품목", "채소", "과일", "농산물", "가격", "시세", "경락가",
+                    "연관", "영향", "같이", "오를", "내릴", "올라", "내려"}
+
+        has_oil  = any(k in text for k in oil_kws)
+        has_agri = any(k in text for k in agri_kws)
+
+        if has_oil and has_agri:
+            try:
+                corr = self.analyzer.get_oil_correlation(SUPPORTED_ITEMS, days=30)
+                if corr:
+                    lines = [f"{r['품목']} {r['상관계수']:+.2f}" for r in corr]
+                    parts.append("최근 30일 유가(WTI)-농산물 상관계수: " + ", ".join(lines))
+            except Exception:
+                pass
+
+        if has_oil:
+            try:
+                intl = self.oil_client.get_international_price()
+                if intl:
+                    lines = [f"{i['품목']} ${i['가격']}/배럴" for i in intl]
+                    parts.append("현재 국제유가: " + ", ".join(lines))
+            except Exception:
+                pass
+
+        if has_agri:
+            try:
+                prices = []
+                for item in SUPPORTED_ITEMS[:6]:
+                    s = self.analyzer.get_volatility_summary(item)
+                    if "error" not in s:
+                        prices.append(
+                            f"{item} {s['현재가(평균낙찰가)']:,}원({s['전일_대비(%)']:+.1f}%)"
+                        )
+                if prices:
+                    parts.append("현재 주요 품목 경락가: " + ", ".join(prices))
+            except Exception:
+                pass
+
+        return "\n".join(parts)
+
+    def get_ai_answer(self, user_input: str, context: str = "") -> str:
         system_msg = (
             "너는 유통학 전문가이자 농산물 마케팅 전략가인 '밭봇'이야. "
-            "반드시 순수한 한국어로만 답해. 한자, 일본어, 한문은 절대 쓰지 마. '거래량', '출하량', '가격' 같은 한국어 단어를 써. "
+            "반드시 순수한 한국어로만 답해. 한자, 일본어, 한문은 절대 쓰지 마. "
+            "'거래량', '출하량', '가격' 같은 한국어 단어를 써. "
             "농민들에게 경매 시세를 분석해주고, 유통 흐름이나 경제 상황에 대해 전문적으로 상담해줘."
         )
+        if context:
+            system_msg += (
+                f"\n\n[실시간 데이터]\n{context}\n\n"
+                "위 데이터를 바탕으로 구체적이고 자연스럽게 답변해줘."
+            )
         try:
             safe_input = user_input.encode("utf-8", errors="ignore").decode("utf-8")
             response = groq_client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
                     {"role": "system", "content": system_msg},
-                    {"role": "user", "content": safe_input}
+                    {"role": "user",   "content": safe_input},
                 ]
             )
             text = response.choices[0].message.content
-            # 한자(CJK) 및 일본어(히라가나·가타카나) 제거
-            text = re.sub(r'[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]+', '', text)
+            text = re.sub(r'[一-鿿぀-ゟ゠-ヿ]+', '', text)
             return text
         except Exception as e:
             return f"AI 답변 중 오류가 발생했어요: {e}"
+
+    # ------------------------------------------------------------------
+    # 포맷 헬퍼
+    # ------------------------------------------------------------------
 
     def _format_domestic_oil(self, data: list[dict]) -> str:
         lines = []
@@ -121,21 +217,21 @@ class AgroChatBot:
             )
         return "\n".join(lines)
 
+    # ------------------------------------------------------------------
+    # 응답 생성
+    # ------------------------------------------------------------------
+
     def _oil_response(self, want_domestic: bool, want_intl: bool) -> str:
         parts = []
         try:
             if want_domestic or (not want_intl):
                 dom = self.oil_client.get_domestic_price()
                 if dom:
-                    parts.append(
-                        "[국내 주유소 전국 평균 가격]\n" + self._format_domestic_oil(dom)
-                    )
+                    parts.append("[국내 주유소 전국 평균 가격]\n" + self._format_domestic_oil(dom))
             if want_intl or (not want_domestic):
                 intl = self.oil_client.get_international_price()
                 if intl:
-                    parts.append(
-                        "[국제 원유 가격 (USD/배럴)]\n" + self._format_intl_oil(intl)
-                    )
+                    parts.append("[국제 원유 가격 (USD/배럴)]\n" + self._format_intl_oil(intl))
         except Exception as e:
             return f"유가 데이터 조회 중 오류가 발생했어요: {e}"
         return "\n\n".join(parts) if parts else "유가 데이터를 가져올 수 없어요. 잠시 후 다시 시도해주세요."
@@ -171,20 +267,54 @@ class AgroChatBot:
             "※ 응답에 10~20초 걸릴 수 있어요"
         )
 
+    def _kamis_response(self, item: str, start_date: str, end_date: str) -> str:
+        if not self.kamis:
+            return (
+                "과거 가격 이력 기능을 사용하려면 KAMIS API 키가 필요합니다.\n"
+                "https://www.kamis.or.kr 에서 무료로 발급받아\n"
+                "Streamlit Secrets에 KAMIS_CERT_KEY, KAMIS_CERT_ID 를 등록해 주세요."
+            )
+        df = self.kamis.get_price_period(item, start_date, end_date)
+        if df.empty:
+            return f"{start_date} ~ {end_date} 기간의 {item} 데이터가 없어요."
+
+        avg  = df["가격"].mean()
+        low  = df["가격"].min()
+        high = df["가격"].max()
+        # 월별 평균 추이
+        df["월"] = df["날짜"].str[:7]
+        monthly = df.groupby("월")["가격"].mean().round(0)
+        trend = "  →  ".join(f"{m} {int(p):,}원" for m, p in monthly.items())
+
+        return (
+            f"[{item} 과거 가격 이력 — {start_date} ~ {end_date}]\n\n"
+            f"  평균가: {round(avg):,}원\n"
+            f"  최저가: {round(low):,}원\n"
+            f"  최고가: {round(high):,}원\n\n"
+            f"월별 추이: {trend}"
+        )
+
+    # ------------------------------------------------------------------
+    # 메인 라우터
+    # ------------------------------------------------------------------
+
     def respond(self, user_input: str) -> str:
         text = user_input.strip()
 
-        # 유가 연동 상관분석 (일반 유가 조회보다 먼저 체크)
+        # 유가 연동 상관분석 (구체적 키워드 — 일반 유가 조회보다 먼저)
         if any(kw in text for kw in ["유가 관련", "유가 영향", "기름값 영향", "유가 연동", "유가랑 관련"]):
             return self._oil_correlation_response()
 
-        # 유가 조회
+        # 단순 유가 조회 (복합 질문은 AI로)
         is_domestic = any(kw in text for kw in _OIL_DOMESTIC_KW)
         is_intl     = any(kw in text for kw in _OIL_INTL_KW)
-        is_oil      = is_domestic or is_intl or any(kw in text for kw in _OIL_GENERAL_KW)
-        if is_oil:
+        is_simple_oil = is_domestic or is_intl or any(kw in text for kw in _OIL_GENERAL_KW)
+        is_complex    = any(kw in text for kw in ["품목", "채소", "과일", "농산물", "연관",
+                                                   "영향", "같이", "오를", "내릴", "올라", "내려"])
+        if is_simple_oil and not is_complex:
             return self._oil_response(want_domestic=is_domestic, want_intl=is_intl)
 
+        # 제철 품목
         if any(kw in text for kw in ["제철", "이번달", "이번 달", "계절"]):
             month = datetime.today().month
             items = self.analyzer.get_seasonal_items(month)
@@ -193,6 +323,15 @@ class AgroChatBot:
                 "각 품목의 가격이나 출하 타이밍을 물어보세요!"
             )
 
+        # 과거 가격 이력 (KAMIS)
+        history_range = self._extract_history_range(text)
+        if history_range:
+            item = self._extract_item(text)
+            if item:
+                start, end = history_range
+                return self._kamis_response(item, start, end)
+
+        # 특정 품목 실시간 조회
         item = self._extract_item(text)
         if item:
             market = self._extract_market(text)
@@ -206,9 +345,9 @@ class AgroChatBot:
                         f"{date_str} {market_label} {item} 데이터가 없어요.\n"
                         "주말·공휴일은 경매가 없습니다. 다른 날짜를 물어보세요."
                     )
-                avg = df["scsbd_prc"].mean()
-                low = df["scsbd_prc"].min()
-                high = df["scsbd_prc"].max()
+                avg   = df["scsbd_prc"].mean()
+                low   = df["scsbd_prc"].min()
+                high  = df["scsbd_prc"].max()
                 count = len(df)
                 return (
                     f"[{date_str}] {market_label} {item} 경매 결과\n"
@@ -235,6 +374,7 @@ class AgroChatBot:
                     f"최근 추이: {trend}"
                 )
 
+        # 급등/급락
         if any(kw in text for kw in ["급등", "급락", "오른", "내린", "알림", "비교"]):
             results = []
             for it in SUPPORTED_ITEMS[:6]:
@@ -253,11 +393,9 @@ class AgroChatBot:
             )
             return f"주요 품목 전일 대비 변동률 (전국 공영도매시장):\n\n{lines}"
 
-        # 유가 관련 키워드가 있지만 위에서 잡히지 않은 경우 재시도
-        if any(kw in text for kw in ["유가", "기름", "경유", "원유"]):
-            return self._oil_response(want_domestic=True, want_intl=True)
-
-        return self.get_ai_answer(text)
+        # 나머지 — 실시간 데이터 컨텍스트 + Groq AI
+        context = self._build_context(text)
+        return self.get_ai_answer(text, context=context)
 
 
 def main():

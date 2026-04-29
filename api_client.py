@@ -312,3 +312,89 @@ class PriceAnalyzer:
 
         results.sort(key=lambda x: abs(x["상관계수"]), reverse=True)
         return results
+
+
+# ---------------------------------------------------------------------------
+# KamisClient — KAMIS 농산물유통정보 과거 가격 이력
+# ---------------------------------------------------------------------------
+
+class KamisClient:
+    """KAMIS 과거 도매 가격 이력 API (수년치 조회 가능)"""
+
+    BASE_URL = "https://www.kamis.or.kr/service/price/xml.do"
+
+    ITEM_CODES: dict[str, str] = {
+        "사과": "111", "배":   "112",
+        "배추": "211", "무":   "212", "감자": "213", "양파": "214",
+        "딸기": "226", "고추": "227", "대파": "231",
+    }
+
+    def __init__(self, cert_key: str, cert_id: str):
+        self.cert_key = cert_key
+        self.cert_id  = cert_id
+        self.session  = _build_session()
+
+    def get_price_period(self, item: str, start_date: str, end_date: str) -> pd.DataFrame:
+        """
+        품목의 기간별 도매 가격 조회.
+
+        Parameters
+        ----------
+        item       : str  품목명 (예: '배추', '사과')
+        start_date : str  시작일 YYYY-MM-DD
+        end_date   : str  종료일 YYYY-MM-DD
+
+        Returns
+        -------
+        DataFrame — columns: [날짜, 품목, 가격]  |  빈 DataFrame on error
+        """
+        code = self.ITEM_CODES.get(item)
+        if not code:
+            return pd.DataFrame()
+
+        params = {
+            "action":          "periodProductList",
+            "p_startday":      start_date,
+            "p_endday":        end_date,
+            "p_itemcode":      code,
+            "p_kindcode":      "01",
+            "p_graderank":     "1",
+            "p_countycode":    "1101",
+            "p_convert_kg_yn": "N",
+            "p_cert_key":      self.cert_key,
+            "p_cert_id":       self.cert_id,
+            "p_returntype":    "json",
+        }
+        try:
+            resp = self.session.get(self.BASE_URL, params=params, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception:
+            return pd.DataFrame()
+
+        rows_raw = data.get("data", {}).get("item", [])
+        if not rows_raw:
+            return pd.DataFrame()
+        if isinstance(rows_raw, dict):
+            rows_raw = [rows_raw]
+
+        rows = []
+        for it in rows_raw:
+            price_str = str(it.get("price", "")).replace(",", "")
+            try:
+                price = float(price_str)
+            except (ValueError, TypeError):
+                continue
+            year = it.get("yyyy", "")
+            day  = it.get("regday", "")   # MM/DD 형식
+            if year and day and "/" in day:
+                date_str = f"{year}-{day.replace('/', '-')}"
+            else:
+                continue
+            rows.append({"날짜": date_str, "품목": item, "가격": price})
+
+        df = pd.DataFrame(rows)
+        if not df.empty:
+            df["가격"] = pd.to_numeric(df["가격"], errors="coerce")
+            df = df.dropna(subset=["가격"]).reset_index(drop=True)
+        return df
