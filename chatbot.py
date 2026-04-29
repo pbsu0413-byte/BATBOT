@@ -23,9 +23,19 @@ def _decrypt(enc_value: str) -> str:
         f = Fernet(kf.read())
     return f.decrypt(enc_value.encode()).decode()
 
-API_KEY     = _decrypt(os.environ.get("AGRO_API_KEY_ENC", ""))
-GROQ_API_KEY = _decrypt(os.environ.get("GROQ_API_KEY_ENC", ""))
-OIL_API_KEY = _decrypt(os.environ.get("OIL_API_KEY_ENC", ""))
+def _get_key(enc_env: str, plain_secret: str) -> str:
+    try:
+        import streamlit as st
+        val = st.secrets.get(plain_secret, "")
+        if val:
+            return val
+    except Exception:
+        pass
+    return _decrypt(os.environ.get(enc_env, ""))
+
+API_KEY      = _get_key("AGRO_API_KEY_ENC", "AGRO_API_KEY")
+GROQ_API_KEY = _get_key("GROQ_API_KEY_ENC", "GROQ_API_KEY")
+OIL_API_KEY  = _get_key("OIL_API_KEY_ENC",  "OIL_API_KEY")
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 SUPPORTED_ITEMS = ["배추", "무", "고추", "대파", "양파", "감자", "딸기", "사과", "배"]
