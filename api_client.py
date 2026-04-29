@@ -284,42 +284,67 @@ class PriceAnalyzer:
     def get_yearly_price(self, item: str, year: int) -> pd.DataFrame:
         """
         aT API로 특정 연도 전체의 월별 평균 경락가 조회.
-        주말·공휴일 제외 평일만 조회하며 ThreadPoolExecutor로 병렬 처리.
+        날짜 범위 파라미터(GTE/LTE)로 단일 호출로 처리.
 
         Returns
         -------
         DataFrame — columns: [월, 평균가]  |  빈 DataFrame on error/no data
         """
-        from calendar import monthrange
+        start = f"{year}-01-01"
+        end   = f"{year}-12-31"
 
-        def fetch_month(month: int):
-            _, last = monthrange(year, month)
-            dates = [
-                date(year, month, d)
-                for d in range(1, last + 1)
-                if date(year, month, d).weekday() < 5
-            ]
-            prices = []
-            for d in dates:
-                df = self.client.get_price_by_date(item, d.strftime("%Y-%m-%d"))
-                if not df.empty and "scsbd_prc" in df.columns:
-                    vals = df["scsbd_prc"].dropna()
-                    if not vals.empty:
-                        prices.append(float(vals.mean()))
-            if not prices:
-                return None
-            return (f"{month:02d}월", round(sum(prices) / len(prices)))
+        params = {
+            "returnType": "json",
+            "pageNo": 1,
+            "numOfRows": 9999,
+            "cond[trd_clcln_ymd::GTE]": start,
+            "cond[trd_clcln_ymd::LTE]": end,
+        }
 
-        results = []
-        with ThreadPoolExecutor(max_workers=6) as ex:
-            for r in ex.map(fetch_month, range(1, 13)):
-                if r:
-                    results.append(r)
-
-        results.sort(key=lambda x: x[0])
-        if not results:
+        try:
+            data = self.client._get(params)
+        except Exception:
             return pd.DataFrame()
-        return pd.DataFrame(results, columns=["월", "평균가"])
+
+        items_raw = (data.get("response", {})
+                         .get("body", {})
+                         .get("items", {}) or {})
+        row_list = items_raw.get("item", [])
+        if not row_list:
+            return pd.DataFrame()
+        if isinstance(row_list, dict):
+            row_list = [row_list]
+
+        df = pd.DataFrame(row_list)
+
+        # 품목 필터
+        mask = pd.Series([False] * len(df))
+        for col in ["corp_gds_item_nm", "gds_sclsf_nm", "gds_mclsf_nm"]:
+            if col in df.columns:
+                mask |= df[col].astype(str).str.contains(item, na=False)
+        df = df[mask].copy()
+
+        if df.empty or "scsbd_prc" not in df.columns:
+            return pd.DataFrame()
+
+        df["scsbd_prc"] = pd.to_numeric(df["scsbd_prc"], errors="coerce")
+        df = df.dropna(subset=["scsbd_prc"])
+
+        # 날짜 → 월 추출
+        date_col = "trd_clcln_ymd" if "trd_clcln_ymd" in df.columns else None
+        if date_col:
+            df["월"] = df[date_col].astype(str).str[5:7].apply(lambda m: f"{int(m):02d}월")
+        else:
+            return pd.DataFrame()
+
+        monthly = (df.groupby("월")["scsbd_prc"]
+                     .mean()
+                     .round(0)
+                     .reset_index()
+                     .rename(columns={"scsbd_prc": "평균가"}))
+        monthly["평균가"] = monthly["평균가"].astype(int)
+        monthly = monthly.sort_values("월").reset_index(drop=True)
+        return monthly
 
     def get_oil_correlation(self, items: list[str], days: int = 30) -> list[dict]:
         """유가(WTI)와 농산물 가격의 상관계수 분석 (최근 N일)"""
