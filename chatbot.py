@@ -5,7 +5,7 @@
              KAMIS 농산물유통정보 (과거 가격 이력)
 """
 
-from groq import Groq
+from openai import OpenAI
 from api_client import AgroMarketClient, PriceAnalyzer, OilPriceClient, KamisClient, MafraHistoryClient
 from datetime import datetime, timedelta
 import re
@@ -43,7 +43,10 @@ OIL_API_KEY      = _get_key("OIL_API_KEY_ENC",    "OIL_API_KEY")
 KAMIS_CERT_KEY   = _get_key("KAMIS_CERT_KEY_ENC",  "KAMIS_CERT_KEY")
 KAMIS_CERT_ID    = _get_key("KAMIS_CERT_ID_ENC",   "KAMIS_CERT_ID")
 MAFRA_API_KEY    = _get_key("MAFRA_API_KEY_ENC",   "MAFRA_API_KEY")
-groq_client = Groq(api_key=GROQ_API_KEY)
+groq_client = OpenAI(
+    api_key=GROQ_API_KEY,
+    base_url="https://factchat-cloud.mindlogic.ai/v1/gateway",
+)
 
 SUPPORTED_ITEMS = ["배추", "무", "고추", "대파", "양파", "감자", "딸기", "사과", "배"]
 
