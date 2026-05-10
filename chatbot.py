@@ -186,7 +186,7 @@ class AgroChatBot:
         try:
             safe_input = user_input.encode("utf-8", errors="ignore").decode("utf-8")
             response = groq_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model="gpt-5-mini",
                 messages=[
                     {"role": "system", "content": system_msg},
                     {"role": "user",   "content": safe_input},
