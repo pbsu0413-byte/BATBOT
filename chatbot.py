@@ -45,7 +45,7 @@ KAMIS_CERT_ID    = _get_key("KAMIS_CERT_ID_ENC",   "KAMIS_CERT_ID")
 MAFRA_API_KEY    = _get_key("MAFRA_API_KEY_ENC",   "MAFRA_API_KEY")
 groq_client = OpenAI(
     api_key=GROQ_API_KEY,
-    base_url="https://factchat-cloud.mindlogic.ai/v1/gateway",
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
 )
 
 SUPPORTED_ITEMS = ["배추", "무", "고추", "대파", "양파", "감자", "딸기", "사과", "배"]
@@ -186,7 +186,7 @@ class AgroChatBot:
         try:
             safe_input = user_input.encode("utf-8", errors="ignore").decode("utf-8")
             response = groq_client.chat.completions.create(
-                model="gpt-5-mini",
+                model="gemini-2.5-flash",
                 messages=[
                     {"role": "system", "content": system_msg},
                     {"role": "user",   "content": safe_input},
