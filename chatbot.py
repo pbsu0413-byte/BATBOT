@@ -10,6 +10,13 @@ from api_client import AgroMarketClient, PriceAnalyzer, OilPriceClient, KamisCli
 from datetime import datetime, timedelta
 import re
 
+# Supabase 예측 DB (선택적 import — 서버 환경에서도 동작)
+try:
+    from database import get_predictions as _db_get_predictions
+    _HAS_PRED_DB = True
+except Exception:
+    _HAS_PRED_DB = False
+
 import os
 from dotenv import load_dotenv
 from cryptography.fernet import Fernet
@@ -357,21 +364,38 @@ class AgroChatBot:
                 "오를까", "내릴까", "올라갈", "내려갈", "상승", "하락",
             ])
             if is_prediction:
-                context = ""
+                context_parts = []
+                # 1. 실시간 시세
                 try:
                     s = self.analyzer.get_volatility_summary(item)
                     if "error" not in s:
-                        context = (
+                        context_parts.append(
                             f"{item} 현재 경락가: {s['현재가(평균낙찰가)']:,}원, "
                             f"전일 대비: {s['전일_대비(%)']:+.1f}%, "
-                            f"z-score: {s['z_score']:+.2f} ({('고가권' if s['z_score']>0.5 else '저가권' if s['z_score']<-0.5 else '평균권')}), "
                             f"신호: {s['신호']}"
                         )
                 except Exception:
                     pass
+                # 2. FARM 시계열 예측값 (Supabase)
+                if _HAS_PRED_DB:
+                    try:
+                        preds = _db_get_predictions(item)
+                        if preds:
+                            pred_lines = [
+                                f"  - {p['model']}: {p['target_date']} "
+                                f"{p['predicted_price']:,.0f}원 ({p['trend']}, "
+                                f"변화율 {p['change_rate']:+.1f}%)"
+                                for p in preds
+                            ]
+                            context_parts.append(
+                                "[FARM AI 시계열 예측 결과]\n" + "\n".join(pred_lines)
+                            )
+                    except Exception:
+                        pass
                 extra = self._build_context(text)
                 if extra:
-                    context = (context + "\n" + extra).strip()
+                    context_parts.append(extra)
+                context = "\n\n".join(context_parts)
                 return self.get_ai_answer(text, context=context)
 
             if any(kw in text for kw in ["가격", "얼마", "시세"]):

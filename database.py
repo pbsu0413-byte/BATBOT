@@ -272,3 +272,53 @@ def delete_comment(comment_id: str, username: str):
         )
     except Exception:
         pass
+
+
+# ── 시계열 예측 ───────────────────────────────────────────────────────────
+def get_predictions(item: str) -> list:
+    """FARM에서 저장한 시계열 예측 결과 조회"""
+    try:
+        r = requests.get(
+            _rest("predictions"),
+            headers=_headers(),
+            params={
+                "select": "*",
+                "item": f"eq.{item}",
+                "order": "updated_at.desc",
+            },
+            timeout=10,
+        )
+        return r.json() if r.ok else []
+    except Exception:
+        return []
+
+
+def save_prediction(item: str, model: str, target_date: str,
+                    predicted_price: float, current_price: float,
+                    change_rate: float, trend: str) -> bool:
+    """시계열 예측 결과 저장 (upsert)"""
+    try:
+        # 기존 삭제 후 재삽입 (upsert 효과)
+        requests.delete(
+            _rest("predictions"),
+            headers=_headers(),
+            params={"item": f"eq.{item}", "model": f"eq.{model}"},
+            timeout=10,
+        )
+        r = requests.post(
+            _rest("predictions"),
+            headers=_headers("return=minimal"),
+            json={
+                "item": item,
+                "model": model,
+                "target_date": target_date,
+                "predicted_price": predicted_price,
+                "current_price": current_price,
+                "change_rate": round(change_rate, 2),
+                "trend": trend,
+            },
+            timeout=10,
+        )
+        return r.status_code in (200, 201, 204)
+    except Exception:
+        return False
