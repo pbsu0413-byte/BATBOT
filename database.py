@@ -6,13 +6,15 @@ from collections import Counter
 _FALLBACK_URL = "https://kgeqtguypsfrhryxbrfu.supabase.co"
 _FALLBACK_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtnZXF0Z3V5cHNmcmhyeXhicmZ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzNjk0NTIsImV4cCI6MjA5NTk0NTQ1Mn0.oIPcHvCu9PQKbd1VFXH5jP8Zkr85IzDKi6sEWWyHNFg"
 
+DB_ERROR_MSG = "⚠️ 데이터베이스에 연결할 수 없어요. Supabase 프로젝트가 일시정지 상태일 수 있어요. 잠시 후 다시 시도해주세요."
+
 
 def _base_url() -> str:
-    return st.secrets.get("SUPABASE_URL", _FALLBACK_URL)
+    return st.secrets.get("SUPABASE_URL", _FALLBACK_URL).strip()
 
 
 def _api_key() -> str:
-    return st.secrets.get("SUPABASE_KEY", _FALLBACK_KEY)
+    return st.secrets.get("SUPABASE_KEY", _FALLBACK_KEY).strip()
 
 
 def _headers(prefer: str = "") -> dict:
@@ -37,39 +39,45 @@ def hash_pw(pw: str) -> str:
 
 # ── 사용자 ──────────────────────────────────────────────────────────────
 def signup(username: str, password: str) -> dict:
-    r = requests.get(
-        _rest("users"),
-        headers=_headers(),
-        params={"select": "id", "username": f"eq.{username}"},
-        timeout=10,
-    )
-    if r.ok and r.json():
-        return {"ok": False, "msg": "이미 사용 중인 아이디예요."}
-    r2 = requests.post(
-        _rest("users"),
-        headers=_headers("return=minimal"),
-        json={"username": username, "password": hash_pw(password)},
-        timeout=10,
-    )
-    if r2.status_code in (200, 201, 204):
-        return {"ok": True}
-    return {"ok": False, "msg": f"가입 실패: {r2.text}"}
+    try:
+        r = requests.get(
+            _rest("users"),
+            headers=_headers(),
+            params={"select": "id", "username": f"eq.{username}"},
+            timeout=10,
+        )
+        if r.ok and r.json():
+            return {"ok": False, "msg": "이미 사용 중인 아이디예요."}
+        r2 = requests.post(
+            _rest("users"),
+            headers=_headers("return=minimal"),
+            json={"username": username, "password": hash_pw(password)},
+            timeout=10,
+        )
+        if r2.status_code in (200, 201, 204):
+            return {"ok": True}
+        return {"ok": False, "msg": f"가입 실패: {r2.text}"}
+    except Exception:
+        return {"ok": False, "msg": DB_ERROR_MSG}
 
 
 def login(username: str, password: str) -> dict:
-    r = requests.get(
-        _rest("users"),
-        headers=_headers(),
-        params={
-            "select": "*",
-            "username": f"eq.{username}",
-            "password": f"eq.{hash_pw(password)}",
-        },
-        timeout=10,
-    )
-    if r.ok and r.json():
-        return {"ok": True, "user": r.json()[0]}
-    return {"ok": False, "msg": "아이디 또는 비밀번호가 틀렸어요."}
+    try:
+        r = requests.get(
+            _rest("users"),
+            headers=_headers(),
+            params={
+                "select": "*",
+                "username": f"eq.{username}",
+                "password": f"eq.{hash_pw(password)}",
+            },
+            timeout=10,
+        )
+        if r.ok and r.json():
+            return {"ok": True, "user": r.json()[0]}
+        return {"ok": False, "msg": "아이디 또는 비밀번호가 틀렸어요."}
+    except Exception:
+        return {"ok": False, "msg": DB_ERROR_MSG}
 
 
 # ── 질문 로그 ────────────────────────────────────────────────────────────
