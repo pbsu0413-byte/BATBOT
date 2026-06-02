@@ -28,6 +28,10 @@ def _decrypt(enc_value: str) -> str:
         return ""
 
 def _get_key(enc_env: str, plain_secret: str) -> str:
+    # 평문 환경변수 먼저 확인 (FastAPI/uvicorn 환경)
+    plain_val = os.environ.get(plain_secret, "")
+    if plain_val:
+        return plain_val
     try:
         import streamlit as st
         val = st.secrets.get(plain_secret, "")
