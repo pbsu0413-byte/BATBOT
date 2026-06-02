@@ -54,7 +54,7 @@ if "messages" not in st.session_state:
 
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        st.write(msg["content"])
+        st.markdown(msg["content"].replace("\n", "  \n"))
 
 if user_input := st.chat_input("질문을 입력하세요..."):
     st.session_state.messages.append({"role": "user", "content": user_input})
@@ -64,7 +64,7 @@ if user_input := st.chat_input("질문을 입력하세요..."):
     with st.chat_message("assistant"):
         with st.spinner("답변 중..."):
             response = st.session_state.bot.respond(user_input)
-        st.write(response)
+        st.markdown(response.replace("\n", "  \n"))  # 줄바꿈 보존
 
     st.session_state.messages.append({"role": "assistant", "content": response})
 

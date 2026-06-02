@@ -351,6 +351,29 @@ class AgroChatBot:
             market = self._extract_market(text)
             market_label = f"{market}시장" if market else "전국 공영도매시장"
 
+            # 예측/전망 질문 → AI 분석 우선
+            is_prediction = any(kw in text for kw in [
+                "앞으로", "전망", "예측", "어떻게 될", "어떨", "미래", "예상",
+                "오를까", "내릴까", "올라갈", "내려갈", "상승", "하락",
+            ])
+            if is_prediction:
+                context = ""
+                try:
+                    s = self.analyzer.get_volatility_summary(item)
+                    if "error" not in s:
+                        context = (
+                            f"{item} 현재 경락가: {s['현재가(평균낙찰가)']:,}원, "
+                            f"전일 대비: {s['전일_대비(%)']:+.1f}%, "
+                            f"z-score: {s['z_score']:+.2f} ({('고가권' if s['z_score']>0.5 else '저가권' if s['z_score']<-0.5 else '평균권')}), "
+                            f"신호: {s['신호']}"
+                        )
+                except Exception:
+                    pass
+                extra = self._build_context(text)
+                if extra:
+                    context = (context + "\n" + extra).strip()
+                return self.get_ai_answer(text, context=context)
+
             if any(kw in text for kw in ["가격", "얼마", "시세"]):
                 date_str = self._extract_date(text)
                 df = self.client.get_price_by_date(item, date_str, market)
@@ -365,10 +388,10 @@ class AgroChatBot:
                 count = len(df)
                 return (
                     f"[{date_str}] {market_label} {item} 경매 결과\n"
-                    f"  평균 낙찰가: {round(avg):,}원\n"
-                    f"  최저가:     {round(low):,}원\n"
-                    f"  최고가:     {round(high):,}원\n"
-                    f"  거래 건수:  {count}건"
+                    f"평균 낙찰가: {round(avg):,}원\n"
+                    f"최저가: {round(low):,}원\n"
+                    f"최고가: {round(high):,}원\n"
+                    f"거래 건수: {count}건"
                 )
 
             if any(kw in text for kw in ["팔", "출하", "타이밍", "될까", "언제", "변동"]):
