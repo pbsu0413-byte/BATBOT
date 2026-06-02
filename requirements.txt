@@ -7,4 +7,3 @@ streamlit>=1.32.0
 python-dotenv>=1.0.0
 cryptography>=41.0.0
 yfinance>=0.2.0
-supabase>=2.3.0,<3.0.0
