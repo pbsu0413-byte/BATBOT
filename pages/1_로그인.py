@@ -1,5 +1,5 @@
 import streamlit as st
-from database import signup, login
+from database import signup, login, check_connection, _base_url
 
 st.set_page_config(page_title="로그인 — 밭봇", page_icon="🌾")
 st.title("🔐 로그인 / 회원가입")
@@ -53,3 +53,12 @@ with tab2:
                 st.success("가입 완료! 로그인 탭에서 로그인해주세요. ✅")
             else:
                 st.error(result["msg"])
+
+# ── 연결 진단 ────────────────────────────────────────────────────────────
+st.divider()
+with st.expander("🔧 연결 진단 (문제 해결용)", expanded=False):
+    st.caption(f"접속 URL: `{_base_url()}`")
+    if st.button("연결 테스트 실행"):
+        with st.spinner("테스트 중..."):
+            diag = check_connection()
+        st.write(diag)
