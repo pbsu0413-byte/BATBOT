@@ -3,12 +3,14 @@ import hashlib
 import streamlit as st
 from collections import Counter
 
-SUPABASE_URL = "https://kgeqtguypsfrhryxbrfu.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtnZXF0Z3V5cHNmcmhyeHdicmZ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzNjk0NTIsImV4cCI6MjA5NTk0NTQ1Mn0.oIPcHvCu9PQKbd1VFXH5jP8Zkr85IzDKi6sEWWyHNFg"
+_FALLBACK_URL = "https://kgeqtguypsfrhryxbrfu.supabase.co"
+_FALLBACK_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtnZXF0Z3V5cHNmcmhyeHdicmZ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzNjk0NTIsImV4cCI6MjA5NTk0NTQ1Mn0.oIPcHvCu9PQKbd1VFXH5jP8Zkr85IzDKi6sEWWyHNFg"
 
 @st.cache_resource
 def get_db() -> Client:
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+    url = st.secrets.get("SUPABASE_URL", _FALLBACK_URL)
+    key = st.secrets.get("SUPABASE_KEY", _FALLBACK_KEY)
+    return create_client(url, key)
 
 def hash_pw(pw: str) -> str:
     return hashlib.sha256(pw.encode()).hexdigest()
