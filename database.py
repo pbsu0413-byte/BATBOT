@@ -4,7 +4,7 @@ import streamlit as st
 from collections import Counter
 import socket
 
-_FALLBACK_URL = "https://kgeqtguypsfrhryxbrfu.supabase.co"
+_FALLBACK_URL = "https://kgeqtguypsfrhrxwbrfu.supabase.co"
 _FALLBACK_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtnZXF0Z3V5cHNmcmhyeXhicmZ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAzNjk0NTIsImV4cCI6MjA5NTk0NTQ1Mn0.oIPcHvCu9PQKbd1VFXH5jP8Zkr85IzDKi6sEWWyHNFg"
 
 DB_ERROR_MSG = "⚠️ 데이터베이스 연결 실패 — 잠시 후 다시 시도해주세요."
