@@ -366,25 +366,28 @@ class AgroChatBot:
             ])
             if is_prediction:
                 context_parts = []
-                # 1. 실시간 시세
-                try:
-                    s = self.analyzer.get_volatility_summary(item)
-                    if "error" not in s:
-                        context_parts.append(
-                            f"{item} 현재 경락가: {s['현재가(평균낙찰가)']:,}원, "
-                            f"전일 대비: {s['전일_대비(%)']:+.1f}%, "
-                            f"신호: {s['신호']}"
-                        )
-                except Exception:
-                    pass
+                is_farm_item = item in FARM_ITEMS
+                # 1. 실시간 시세 (국내 경매 품목만 — FARM 전용 품목은 aT API 없음)
+                if not is_farm_item:
+                    try:
+                        s = self.analyzer.get_volatility_summary(item)
+                        if "error" not in s:
+                            context_parts.append(
+                                f"{item} 현재 경락가: {s['현재가(평균낙찰가)']:,}원, "
+                                f"전일 대비: {s['전일_대비(%)']:+.1f}%, "
+                                f"신호: {s['신호']}"
+                            )
+                    except Exception:
+                        pass
                 # 2. FARM 시계열 예측값 (Supabase)
                 if _HAS_PRED_DB:
                     try:
                         preds = _db_get_predictions(item)
                         if preds:
+                            unit = "달러($)" if is_farm_item else "원"
                             pred_lines = [
                                 f"  - {p['model']}: {p['target_date']} "
-                                f"{p['predicted_price']:,.0f}원 ({p['trend']}, "
+                                f"{p['predicted_price']:,.2f}{unit} ({p['trend']}, "
                                 f"변화율 {p['change_rate']:+.1f}%)"
                                 for p in preds
                             ]
@@ -393,6 +396,11 @@ class AgroChatBot:
                             )
                     except Exception:
                         pass
+                if is_farm_item and not context_parts:
+                    context_parts.append(
+                        f"{item}은 국제 선물 품목으로 국내 경매 데이터가 없습니다. "
+                        "FARM AI 예측 데이터를 기반으로 답변해주세요."
+                    )
                 extra = self._build_context(text)
                 if extra:
                     context_parts.append(extra)
