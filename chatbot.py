@@ -60,6 +60,7 @@ groq_client = OpenAI(
 )
 
 SUPPORTED_ITEMS = ["배추", "무", "고추", "대파", "양파", "감자", "딸기", "사과", "배"]
+FARM_ITEMS = ["옥수수", "소맥", "대두", "설탕", "커피"]  # FARM 시계열 전용 품목
 
 _OIL_DOMESTIC_KW = {"경유", "휘발유", "기름값", "주유", "LPG", "등유", "기름"}
 _OIL_INTL_KW     = {"국제유가", "WTI", "브렌트", "두바이유", "원유", "국제 유가"}
@@ -79,7 +80,7 @@ class AgroChatBot:
     # ------------------------------------------------------------------
 
     def _extract_item(self, text: str) -> str | None:
-        for item in SUPPORTED_ITEMS:
+        for item in SUPPORTED_ITEMS + FARM_ITEMS:
             if item in text:
                 return item
         return None
