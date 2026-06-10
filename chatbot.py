@@ -131,6 +131,80 @@ def _get_current_weather(nx: int = 60, ny: int = 127) -> str:
         summary += f" · 1시간 강수량 {rain}mm"
     return summary
 
+# ── 기상청 단기예보 (오늘~3일) ──────────────────────────────────────────────
+_KMA_FCST_URL    = "https://apihub.kma.go.kr/api/typ02/openApi/VilageFcstInfoService_2.0/getVilageFcst"
+_FCST_BASE_HOURS = [2, 5, 8, 11, 14, 17, 20, 23]
+
+_SKY_MAP = {"1": "맑음", "3": "구름많음", "4": "흐림"}
+_PTY_FCST_MAP = {"0": "", "1": "비", "2": "비/눈", "3": "눈", "4": "소나기"}
+
+_FORECAST_KW = [
+    "내일", "모레", "주간", "이번주", "주말", "예보", "전망",
+    "올까", "올까요", "올거야", "며칠",
+]
+
+def _is_forecast_query(text: str) -> bool:
+    return any(kw in text for kw in _FORECAST_KW)
+
+def _fcst_base_time():
+    """단기예보 발표시각: 0200·0500·0800·1100·1400·1700·2000·2300 (10분 후 제공)"""
+    now = datetime.now() - timedelta(minutes=10)
+    valid = [h for h in _FCST_BASE_HOURS if h <= now.hour]
+    if not valid:                              # 자정~02:10 → 전날 2300 사용
+        yesterday = now - timedelta(days=1)
+        return yesterday.strftime("%Y%m%d"), "2300"
+    return now.strftime("%Y%m%d"), f"{max(valid):02d}00"
+
+def _get_forecast_weather(nx: int = 60, ny: int = 127) -> str:
+    from collections import defaultdict
+    base_date, base_time = _fcst_base_time()
+    params = {
+        "pageNo": 1, "numOfRows": 1000, "dataType": "JSON",
+        "base_date": base_date, "base_time": base_time,
+        "nx": nx, "ny": ny, "authKey": _KMA_API_KEY,
+    }
+    resp  = requests.get(_KMA_FCST_URL, params=params, timeout=10)
+    items = resp.json()["response"]["body"]["items"]["item"]
+
+    # 날짜별 데이터 수집
+    daily = defaultdict(lambda: {"temps": [], "pops": [], "sky": "1", "pty": "0"})
+    for it in items:
+        date, cat, val, ftime = it["fcstDate"], it["category"], it["fcstValue"], it["fcstTime"]
+        if   cat == "TMP":  daily[date]["temps"].append(float(val))
+        elif cat == "TMX":  daily[date]["tmax"] = float(val)
+        elif cat == "TMN":  daily[date]["tmin"] = float(val)
+        elif cat == "POP":  daily[date]["pops"].append(float(val))
+        elif cat == "SKY" and ftime in ("1200", "1500"):
+            daily[date]["sky"] = val
+        elif cat == "PTY" and ftime in ("1200", "1500") and val != "0":
+            daily[date]["pty"] = val
+
+    today = datetime.now()
+    result_lines = []
+    for i in range(3):
+        d_obj  = today + timedelta(days=i)
+        dkey   = d_obj.strftime("%Y%m%d")
+        label  = ["오늘", "내일", "모레"][i]
+        dfmt   = f"{d_obj.month}/{d_obj.day}"
+        if dkey not in daily:
+            continue
+        d = daily[dkey]
+
+        tmax = d.get("tmax", max(d["temps"]) if d["temps"] else None)
+        tmin = d.get("tmin", min(d["temps"]) if d["temps"] else None)
+        pop  = f"{max(d['pops']):.0f}" if d["pops"] else "0"
+
+        pty = d["pty"]
+        sky_txt = _PTY_FCST_MAP.get(pty, "") or _SKY_MAP.get(d["sky"], "맑음")
+
+        tmax_s = f"{tmax:.0f}" if tmax is not None else "?"
+        tmin_s = f"{tmin:.0f}" if tmin is not None else "?"
+        result_lines.append(
+            f"{label}({dfmt}): 최고 {tmax_s}°C / 최저 {tmin_s}°C · {sky_txt} · 강수확률 {pop}%"
+        )
+
+    return "\n".join(result_lines) if result_lines else "예보 데이터를 가져올 수 없어요."
+
 
 class AgroChatBot:
     def __init__(self):
@@ -387,7 +461,16 @@ class AgroChatBot:
     def respond(self, user_input: str) -> str:
         text = user_input.strip()
 
-        # ★ 0순위: 기상청 실시간 날씨 조회
+        # ★ 0순위-A: 날씨 예보 (단기예보 3일)
+        if _is_forecast_query(text):
+            try:
+                loc_name, (nx, ny) = _detect_location(text)
+                forecast = _get_forecast_weather(nx, ny)
+                return f"📅 {loc_name} 날씨 예보\n{forecast}"
+            except Exception as e:
+                print(f"[단기예보 오류] {e}")
+
+        # ★ 0순위-B: 기상청 실시간 날씨 조회
         if _is_weather_query(text):
             try:
                 loc_name, (nx, ny) = _detect_location(text)
