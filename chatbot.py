@@ -9,6 +9,7 @@ from openai import OpenAI
 from api_client import AgroMarketClient, PriceAnalyzer, OilPriceClient, KamisClient, MafraHistoryClient
 from datetime import datetime, timedelta
 import re
+import requests
 
 # Supabase 예측 DB (선택적 import — 서버 환경에서도 동작)
 try:
@@ -65,6 +66,70 @@ FARM_ITEMS = ["옥수수", "소맥", "대두", "설탕", "커피"]  # FARM 시�
 _OIL_DOMESTIC_KW = {"경유", "휘발유", "기름값", "주유", "LPG", "등유", "기름"}
 _OIL_INTL_KW     = {"국제유가", "WTI", "브렌트", "두바이유", "원유", "국제 유가"}
 _OIL_GENERAL_KW  = {"유가"}
+
+# ── 기상청 날씨 API ──────────────────────────────────────────────────────────
+_KMA_API_KEY  = "YCj_RwjOTDCo_0cIzvwwyw"
+_KMA_NCST_URL = "https://apihub.kma.go.kr/api/typ02/openApi/VilageFcstInfoService_2.0/getUltraSrtNcst"
+
+_LOCATION_GRID = {
+    "서울": (60, 127), "부산": (98, 76),  "대구": (89, 90),
+    "인천": (55, 124), "광주": (58, 74),  "대전": (67, 100),
+    "울산": (102, 84), "수원": (60, 121), "춘천": (73, 134),
+    "강릉": (92, 131), "청주": (69, 107), "전주": (63, 89),
+    "목포": (50, 67),  "여수": (73, 66),  "제주": (52, 38),
+    "포항": (102, 94), "경주": (100, 91), "천안": (63, 110),
+}
+
+_PTY_MAP = {
+    "0": "맑음", "1": "비", "2": "비/눈",
+    "3": "눈",   "5": "빗방울", "6": "빗방울·눈날림", "7": "눈날림",
+}
+
+_WEATHER_KW = [
+    "날씨", "기온", "온도", "비 와", "눈 와", "비오", "눈오",
+    "흐려", "맑아", "바람", "강수", "습도", "우산", "더워", "추워",
+    "덥다", "춥다", "날씨야", "날씨어",
+]
+
+def _is_weather_query(text: str) -> bool:
+    return any(kw in text for kw in _WEATHER_KW)
+
+def _detect_location(text: str):
+    for loc, coords in _LOCATION_GRID.items():
+        if loc in text:
+            return loc, coords
+    return "서울", (60, 127)
+
+def _kma_base_time():
+    """초단기실황은 매시 40분 이후 정상 조회 → 40분 미만이면 1시간 전 사용"""
+    now = datetime.now()
+    if now.minute < 40:
+        now -= timedelta(hours=1)
+    return now.strftime("%Y%m%d"), now.strftime("%H00")
+
+def _get_current_weather(nx: int = 60, ny: int = 127) -> str:
+    base_date, base_time = _kma_base_time()
+    params = {
+        "pageNo": 1, "numOfRows": 50, "dataType": "JSON",
+        "base_date": base_date, "base_time": base_time,
+        "nx": nx, "ny": ny, "authKey": _KMA_API_KEY,
+    }
+    resp = requests.get(_KMA_NCST_URL, params=params, timeout=8)
+    data = resp.json()
+    items = data["response"]["body"]["items"]["item"]
+    obs   = {it["category"]: it["obsrValue"] for it in items}
+
+    temp   = obs.get("T1H", "?")
+    humid  = obs.get("REH", "?")
+    wind   = obs.get("WSD", "?")
+    rain   = obs.get("RN1", "0")
+    pty_cd = str(int(float(obs.get("PTY", 0))))
+    sky    = _PTY_MAP.get(pty_cd, "맑음")
+
+    summary = f"기온 {temp}°C · {sky} · 습도 {humid}% · 풍속 {wind}m/s"
+    if rain not in ("0", "강수없음"):
+        summary += f" · 1시간 강수량 {rain}mm"
+    return summary
 
 
 class AgroChatBot:
@@ -321,6 +386,16 @@ class AgroChatBot:
 
     def respond(self, user_input: str) -> str:
         text = user_input.strip()
+
+        # ★ 0순위: 기상청 실시간 날씨 조회
+        if _is_weather_query(text):
+            try:
+                loc_name, (nx, ny) = _detect_location(text)
+                summary = _get_current_weather(nx, ny)
+                return f"🌤 {loc_name} 현재 날씨\n{summary}"
+            except Exception as e:
+                print(f"[기상청 오류] {e}")
+                # 실패 시 AI 폴백으로 계속 진행
 
         # 유가 연동 상관분석 (구체적 키워드 — 일반 유가 조회보다 먼저)
         if any(kw in text for kw in ["유가 관련", "유가 영향", "기름값 영향", "유가 연동", "유가랑 관련"]):
